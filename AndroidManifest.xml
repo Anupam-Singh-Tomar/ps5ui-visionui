@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.freemytv.cinema">
+
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <!-- TVmaze's streaming schedule and the posters -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Android 11+ package visibility: the apps in the dock and the streaming apps the cards open -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- The Inputs row: the TV's inputs and the apps that show them -->
+        <intent>
+            <action android:name="android.media.tv.TvInputService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:host="android.media.tv" />
+        </intent>
+        <intent>
+            <action android:name="com.android.tv.action.VIEW_INPUTS" />
+        </intent>
+        <package android:name="com.android.tv.settings" />
+        <!-- visionUI's Switch account: Google TV's own account picker -->
+        <package android:name="com.google.android.apps.tv.launcherx" />
+        <!-- ps5UI's corner: Free My TV frees memory and opens Home settings -->
+        <package android:name="io.freemytv" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:banner="@drawable/banner"
+        android:icon="@drawable/banner"
+        android:label="ps5UI"
+        android:theme="@style/Cinema">
+
+        <activity
+            android:name=".CinemaActivity"
+            android:label="ps5UI"
+            android:clearTaskOnLaunch="true"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:stateNotNeeded="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- From Free My TV, for ps5UI's corner: the account chosen on Google TV's picker, and Free memory's result -->
+        <receiver
+            android:name=".CornerReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.freemytv.cinema.ACCOUNT" />
+                <action android:name="io.freemytv.cinema.FREED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- visionUI: the same shows and apps as a glass window, in visionOS's manner -->
+        <activity
+            android:name=".VisionActivity"
+            android:label="visionUI"
+            android:clearTaskOnLaunch="true"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:stateNotNeeded="true"
+            android:taskAffinity="io.freemytv.cinema.vision">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

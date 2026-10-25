@@ -1,0 +1,4 @@
+out/
+*.keystore
+*.apk
+*.idsig

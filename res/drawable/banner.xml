@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 320x180 TV banner: three cards on black, the middle one lit red -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp" android:height="180dp"
+    android:viewportWidth="320" android:viewportHeight="180">
+    <path android:fillColor="#0B0B0D" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#40E50914" android:pathData="M60,90a100,60 0 1,0 200,0a100,60 0 1,0 -200,0z" />
+    <path android:fillColor="#33FFFFFF" android:pathData="M82,52h44a8,8 0 0 1 8,8v60a8,8 0 0 1 -8,8h-44a8,8 0 0 1 -8,-8v-60a8,8 0 0 1 8,-8z" />
+    <path android:fillColor="#33FFFFFF" android:pathData="M194,52h44a8,8 0 0 1 8,8v60a8,8 0 0 1 -8,8h-44a8,8 0 0 1 -8,-8v-60a8,8 0 0 1 8,-8z" />
+    <path android:fillColor="#E50914" android:pathData="M136,34h48a10,10 0 0 1 10,10v92a10,10 0 0 1 -10,10h-48a10,10 0 0 1 -10,-10v-92a10,10 0 0 1 10,-10z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M152,74l22,16l-22,16z" />
+</vector>
