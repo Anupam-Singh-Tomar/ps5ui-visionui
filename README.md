@@ -4,9 +4,29 @@ Two home screens for Google TV and Android TV: **ps5UI**, in the manner of the P
 in the manner of visionOS. One small app, no Google services, no API keys, drawn by hand on a single canvas so it
 stays smooth on a 2 GB TV.
 
-**Just want it? [Download ps5UI.apk](ps5UI.apk)** and see [Install](#install). It's one app: the remote's Home button,
-the account corner and Free memory are built in (they come from [Free My TV](https://github.com/simbasjungles/free-my-tv)'s
-safe mode, see [Credits](#credits)), so there's nothing else to install.
+## Quick install (the tested way)
+
+> **Heads-up: version 1.1 is untested.** The home screens themselves (ps5UI and visionUI) were tested on an Acer
+> Google TV (Android 14, 2 GB). The Home button, the account picker on waking and Free memory are new in 1.1, built
+> in from Free My TV, and haven't been tried on a TV yet. If something goes wrong, uninstall ps5UI and the TV is as
+> it was: 1.1 never turns anything on the TV off.
+
+What was tested: installing with adb from a computer, and opening ps5UI from the TV's apps.
+
+1. On the TV, turn on USB debugging: Settings > System > About, press OK on **Android TV OS build** seven times,
+   then Settings > System > Developer options > **USB debugging** on. Note the TV's IP address (Settings > Network).
+2. Download **[ps5UI.apk](ps5UI.apk)** and [adb](https://developer.android.com/tools/releases/platform-tools) to a
+   computer on the same Wi-Fi as the TV, and run:
+   ```bash
+   adb connect <TV IP>:5555
+   adb install -r ps5UI.apk
+   ```
+   The first time, the TV asks **Allow USB debugging?**: tick **Always allow** and pick **Allow**, then run the
+   install again if it stopped.
+3. On the TV, open **ps5UI** or **visionUI** from your apps.
+
+Then (untested, new in 1.1): ps5UI opens **Home button** the first time. Pick ps5UI or visionUI and accept **Allow
+USB debugging?** on the TV, and the remote's Home button opens it from any app. More in [Install](#install).
 
 ![ps5UI: the next race leads the row, its track behind it](screenshots/ps5ui-home.jpg)
 
@@ -49,14 +69,10 @@ safe mode, see [Credits](#credits)), so there's nothing else to install.
 ## Install
 
 1. Get [`ps5UI.apk`](ps5UI.apk) onto the TV, either way:
-   - **On the TV:** install the Downloader app (by AFTVnews) from the Play Store, allow it to install unknown apps
-     when it asks, and open this address in it:
+   - **From a computer (tested):** as in [Quick install](#quick-install-the-tested-way).
+   - **On the TV (not tested):** install the Downloader app (by AFTVnews) from the Play Store, allow it to install
+     unknown apps when it asks, and open this address in it:
      `https://github.com/Anupam-Singh-Tomar/ps5ui-visionui/raw/main/ps5UI.apk`
-   - **From a computer:** turn on USB debugging (below), then:
-     ```bash
-     adb connect <TV IP>:5555
-     adb install -r ps5UI.apk
-     ```
 2. Open **ps5UI** (or **visionUI**) from the TV's apps. The first time, **Home button** opens: pick ps5UI or visionUI.
 3. The TV asks **Allow USB debugging?**: tick **Always allow** and pick **Allow**. That's it: the remote's Home button
    now opens the one you picked, from any app.
@@ -64,7 +80,7 @@ safe mode, see [Credits](#credits)), so there's nothing else to install.
 Android 8 or newer. Tested on an Acer Google TV (Android 14, 2 GB). Updates: install the new `ps5UI.apk` over the old
 one; your app order is kept.
 
-### The Home button
+### The Home button (new in 1.1, untested)
 
 Google TV doesn't let another app be its home screen without turning Google TV's own off, and on some TVs (the Acer
 and Kalley ones, at least) that makes the TV get stuck at start. So ps5UI does it the safe way, as Free My TV's safe
