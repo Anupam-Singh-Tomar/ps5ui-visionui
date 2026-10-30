@@ -24,6 +24,7 @@ public class VisionActivity extends Activity {
         setContentView(view);
         view.requestFocus();
         loadedAt = SystemClock.elapsedRealtime();
+        HomeSetup.firstRun(this);
     }
 
     @Override protected void onResume() {

@@ -4,7 +4,8 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
-    <!-- TVmaze's streaming schedule and the posters -->
+    <!-- TVmaze's streaming schedule and the posters; and the TV's own ADB (127.0.0.1:5555), for the Home button's
+         setup and Free memory -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Android 11+ package visibility: the apps in the dock and the streaming apps the cards open -->
@@ -29,10 +30,13 @@
             <action android:name="com.android.tv.action.VIEW_INPUTS" />
         </intent>
         <package android:name="com.android.tv.settings" />
-        <!-- visionUI's Switch account: Google TV's own account picker -->
+        <!-- Switch account and the picker on waking: Google TV's own account picker -->
         <package android:name="com.google.android.apps.tv.launcherx" />
-        <!-- ps5UI's corner: Free My TV frees memory and opens Home settings -->
-        <package android:name="io.freemytv" />
+        <!-- The Home button: the TV's own home screen, the one it replaces -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <application
@@ -63,15 +67,38 @@
             </intent-filter>
         </activity>
 
-        <!-- From Free My TV, for ps5UI's corner: the account chosen on Google TV's picker, and Free memory's result -->
+        <!-- For ps5UI's corner: the account chosen on Google TV's picker, from the Home button or Free My TV's -->
         <receiver
             android:name=".CornerReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="io.freemytv.cinema.ACCOUNT" />
-                <action android:name="io.freemytv.cinema.FREED" />
             </intent-filter>
         </receiver>
+
+        <!-- Home settings: which home screen the Home button opens -->
+        <activity
+            android:name=".HomeSetup"
+            android:label="Home button"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+
+        <!-- The Home button (Free My TV's safe mode, built in). Its own process: the system waits for it on every key,
+             so the home screens must never be able to slow it down, and it stays small while another app is open. -->
+        <service
+            android:name=".KeyService"
+            android:process=":keys"
+            android:exported="true"
+            android:label="ps5UI Home button"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/key_service" />
+        </service>
 
         <!-- visionUI: the same shows and apps as a glass window, in visionOS's manner -->
         <activity

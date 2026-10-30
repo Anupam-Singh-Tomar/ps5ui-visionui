@@ -2,3 +2,4 @@ out/
 *.keystore
 *.apk
 *.idsig
+!/ps5UI.apk

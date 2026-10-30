@@ -5,20 +5,16 @@ import android.content.Context;
 import android.content.Intent;
 
 /**
- * From Free My TV, for the corner (Corner): the account chosen on Google TV's picker (its name only), and what Free
- * memory freed. Kept in the home screen's preferences, where the corner hears them even when it opens later.
+ * For the corner (Corner): the account chosen on Google TV's picker (its name only), from the Home button (KeyService)
+ * or from Free My TV's. Kept in the home screen's preferences, where the corner hears it even when it opens later.
  */
 public class CornerReceiver extends BroadcastReceiver {
+    static final String ACCOUNT = "io.freemytv.cinema.ACCOUNT";
+
     @Override public void onReceive(Context c, Intent intent) {
-        String action = intent.getAction();
-        android.content.SharedPreferences.Editor prefs = c.getSharedPreferences("cinema", Context.MODE_PRIVATE).edit();
-        if ("io.freemytv.cinema.ACCOUNT".equals(action)) {
-            String name = intent.getStringExtra("name");
-            if (name == null || name.length() > 60 || name.contains("@")) return;   // a name, never an address
-            prefs.putString("account", name.trim()).apply();
-        } else if ("io.freemytv.cinema.FREED".equals(action)) {
-            String text = intent.getStringExtra("text");
-            prefs.putString("freed", text == null ? "" : text).putLong("freedAt", System.currentTimeMillis()).apply();
-        }
+        if (!ACCOUNT.equals(intent.getAction())) return;
+        String name = intent.getStringExtra("name");
+        if (name == null || name.length() > 60 || name.contains("@")) return;   // a name, never an address
+        c.getSharedPreferences("cinema", Context.MODE_PRIVATE).edit().putString("account", name.trim()).apply();
     }
 }

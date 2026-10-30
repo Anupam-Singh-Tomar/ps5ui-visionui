@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="key_service">Lets the remote\'s Home button open ps5UI or visionUI from any app (Home settings, in ps5UI\'s corner). It only reads the Home button, which screen is in front, and the name on the account you pick on Google TV\'s account screen.</string>
+</resources>

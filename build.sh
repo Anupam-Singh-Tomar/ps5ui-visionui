@@ -15,7 +15,7 @@ KS=ps5ui.keystore
 rm -rf "$OUT" && mkdir -p "$OUT/gen" "$OUT/classes"
 "$BT/aapt2" compile --dir res -o "$OUT/res.zip"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$AJ" --manifest AndroidManifest.xml --java "$OUT/gen" \
-  --min-sdk-version 26 --target-sdk-version 34 --version-code 1 --version-name 1.0 "$OUT/res.zip"
+  --min-sdk-version 26 --target-sdk-version 34 --version-code 2 --version-name 1.1 "$OUT/res.zip"
 javac -nowarn -source 17 -target 17 -classpath "$AJ" -encoding UTF-8 -d "$OUT/classes" \
   $(find src "$OUT/gen" -name '*.java')
 jar -c -f "$OUT/app-classes.jar" -C "$OUT/classes" .

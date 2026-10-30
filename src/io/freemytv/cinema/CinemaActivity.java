@@ -25,6 +25,7 @@ public class CinemaActivity extends Activity {
         getWindow().setBackgroundDrawable(null);   // the view paints every pixel: no need to paint black under it
         view.requestFocus();
         loadedAt = SystemClock.elapsedRealtime();
+        HomeSetup.firstRun(this);
     }
 
     @Override protected void onResume() {

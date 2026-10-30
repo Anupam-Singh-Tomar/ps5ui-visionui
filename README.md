@@ -4,8 +4,9 @@ Two home screens for Google TV and Android TV: **ps5UI**, in the manner of the P
 in the manner of visionOS. One small app, no Google services, no API keys, drawn by hand on a single canvas so it
 stays smooth on a 2 GB TV.
 
-Built as a companion to **[Free My TV](https://github.com/simbasjungles/free-my-tv)**, which frees a Google TV from
-its stock home screen. See [Credits](#credits).
+**Just want it? [Download ps5UI.apk](ps5UI.apk)** and see [Install](#install). It's one app: the remote's Home button,
+the account corner and Free memory are built in (they come from [Free My TV](https://github.com/simbasjungles/free-my-tv)'s
+safe mode, see [Credits](#credits)), so there's nothing else to install.
 
 ![ps5UI: the next race leads the row, its track behind it](screenshots/ps5ui-home.jpg)
 
@@ -47,30 +48,60 @@ its stock home screen. See [Credits](#credits).
 
 ## Install
 
-You need a JDK 17+, the Android SDK (`build-tools;34.0.0`, `platforms;android-34`) and adb.
+1. Get [`ps5UI.apk`](ps5UI.apk) onto the TV, either way:
+   - **On the TV:** install the Downloader app (by AFTVnews) from the Play Store, allow it to install unknown apps
+     when it asks, and open this address in it:
+     `https://github.com/Anupam-Singh-Tomar/ps5ui-visionui/raw/main/ps5UI.apk`
+   - **From a computer:** turn on USB debugging (below), then:
+     ```bash
+     adb connect <TV IP>:5555
+     adb install -r ps5UI.apk
+     ```
+2. Open **ps5UI** (or **visionUI**) from the TV's apps. The first time, **Home button** opens: pick ps5UI or visionUI.
+3. The TV asks **Allow USB debugging?**: tick **Always allow** and pick **Allow**. That's it: the remote's Home button
+   now opens the one you picked, from any app.
+
+Android 8 or newer. Tested on an Acer Google TV (Android 14, 2 GB). Updates: install the new `ps5UI.apk` over the old
+one; your app order is kept.
+
+### The Home button
+
+Google TV doesn't let another app be its home screen without turning Google TV's own off, and on some TVs (the Acer
+and Kalley ones, at least) that makes the TV get stuck at start. So ps5UI does it the safe way, as Free My TV's safe
+mode does: **nothing on the TV is turned off**. Google TV's home stays underneath, and ps5UI's Home button (an
+accessibility service, *ps5UI Home button*) opens ps5UI instead:
+
+- **Home** opens ps5UI or visionUI, from any app.
+- When Google TV's home comes up anyway (after a start, on waking, backing out of an app), ps5UI opens over it. You
+  may see Google TV's home for a moment first.
+- When the TV starts or wakes, Google TV's own **Choose an account** screen comes first (turn it off in Home
+  settings). On that screen only, ps5UI keeps the name on the account you pick, never the email, for the corner.
+  Google doesn't let other apps read account photos, so the corner shows an initial.
+- **Free memory** (the corner) closes the apps Android keeps waiting in the background, through the TV's own ADB, and
+  shows how much it freed.
+
+To change it later: ps5UI's corner (Up from the top row, by the clock) > **Home settings**. Pick **Google TV** to
+give Home back to Google TV. To remove everything, uninstall ps5UI.
+
+**Turning on USB debugging** (needed once, for the Home button and Free memory): Settings > System > About, press OK
+on **Android TV OS build** seven times; then Settings > System > Developer options > **USB debugging**. If you'd rather
+not, turn on *ps5UI Home button* in Settings > System > Accessibility instead (Free memory then won't work).
+
+Already use Free My TV? Then it handles the Home key itself and ps5UI stays out of its way: pick ps5UI in Free My TV >
+Home Settings > Home Button.
+
+### Building it yourself
+
+You need a JDK 17+ and the Android SDK (`build-tools;34.0.0`, `platforms;android-34`). No Gradle.
 
 ```bash
 ./build.sh
-adb connect <TV IP>:5555
 adb install -r out/ps5UI.apk
 ```
 
 `build.sh` makes `out/ps5UI.apk`, signed with a key of its own (`ps5ui.keystore`, made on the first build). Keep it:
-updates must be signed with the same key.
-
-ps5UI and visionUI show up in the TV's apps list and as home screens. To make the remote's Home button open one on
-a Google TV, use Free My TV (Home Settings > Home Button). Android 8 or newer is needed. It was tested on an Acer
-Google TV (Android 14, 2 GB).
-
-### With Free My TV
-
-Free My TV adds two things to ps5UI's account corner:
-
-- **The account name:** when someone picks an account on Google TV's "Choose an account" screen, Free My TV passes
-  ps5UI the name on the button they chose (never the email). Google doesn't let other apps read account photos, so
-  the corner shows an initial. Without Free My TV it shows a plain person.
-- **Free memory:** Free My TV closes the apps Android keeps waiting in the background, through the TV's own ADB, and
-  ps5UI shows how much it freed.
+updates must be signed with the same key. (An APK you build won't install over the one here, which has another key:
+uninstall that one first.)
 
 ## Data
 
@@ -84,9 +115,10 @@ No keys and no accounts. Everything is cached on the TV.
 ## Credits
 
 - **[Free My TV](https://github.com/simbasjungles/free-my-tv)** ([freemytv.io](https://freemytv.io)), MIT licensed,
-  by the Free My TV contributors. Its Home button handling, account picker and Free Memory are what ps5UI's corner
-  and Home key rely on. It also shaped how this app is built: one hand-drawn canvas, no Gradle, no libraries.
-  The package name (`io.freemytv.cinema`) keeps that link.
+  by the Free My TV contributors. ps5UI's Home button, account picker and Free memory are Free My TV's safe mode,
+  built in: its ADB client ([`Adb.java`](src/io/freemytv/cinema/Adb.java)) and its way of handling Google TV's
+  home screen. It also shaped how this app is built: one hand-drawn canvas, no Gradle, no libraries. The package
+  name (`io.freemytv.cinema`) keeps that link.
 - Show data and art: TVmaze and the shows' owners. Track photos: their authors on Wikimedia Commons, under the
   licence shown with each.
 

@@ -11,7 +11,6 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -21,13 +20,13 @@ import android.text.TextUtils;
 /**
  * The top right corner, beside the clock: the picture of who uses the TV (their initial on a colour of their own), in
  * the empty space above the shows. Up from the shows reaches it; OK drops a small menu under it: Switch account
- * (Google TV's own picker), Free memory and Home settings (Free My TV's), TV settings. Free My TV tells us who chose
- * which account on that picker (CornerReceiver); until then it's a plain person.
+ * (Google TV's own picker), Free memory (MemoryCleaner), Home settings (HomeSetup), TV settings. The Home button
+ * (KeyService, or Free My TV's) tells us who chose which account on that picker (CornerReceiver); until then it's a
+ * plain person.
  */
 final class Corner {
     static final int SWITCH = 0, FREE_MEMORY = 1, HOME_SETTINGS = 2, TV_SETTINGS = 3;
     private static final String[] LABELS = {"Switch account", "Free memory", "Home settings", "TV settings"};
-    private static final String FREE_MY_TV = "io.freemytv";
     private static final String PROFILES = "com.google.android.apps.tv.launcherx/.profile.chooser.ProfileChooserActivity";
     /** One colour per person, picked by their name: muted, so the white initial reads on all of them. */
     private static final int[] COLORS = {0xFF7F77DD, 0xFF1D9E75, 0xFFD85A30, 0xFFD4537E, 0xFF378ADD, 0xFFBA7517};
@@ -65,15 +64,10 @@ final class Corner {
         ink.setStrokeJoin(Paint.Join.ROUND);
     }
 
-    /** From CornerReceiver: who chose which account, what Free memory freed. */
+    /** From CornerReceiver: who chose which account. */
     private void changed(SharedPreferences p, String key) {
-        if ("account".equals(key)) {
-            account = p.getString("account", "");
-        } else if ("freedAt".equals(key)) {
-            String result = p.getString("freed", "");
-            freeing = false;
-            show(result.isEmpty() ? "Already freeing memory" : result, 10_000);
-        }
+        if (!"account".equals(key)) return;
+        account = p.getString("account", "");
         redraw.run();
     }
 
@@ -101,14 +95,15 @@ final class Corner {
                 break;
             case FREE_MEMORY:
                 if (freeing) break;
-                freeing = true;
-                show("Freeing memory…", 15_000);
-                askFreeMemory();
+                freeing = MemoryCleaner.clean(context, (result, finished) -> {
+                    if (finished) freeing = false;
+                    show(result, finished ? 10_000 : 60_000);
+                    redraw.run();
+                });
+                if (freeing) show("Freeing memory…", 15_000);
                 break;
             case HOME_SETTINGS:
-                Intent home = context.getPackageManager().getLeanbackLaunchIntentForPackage(FREE_MY_TV);
-                if (home == null) home = context.getPackageManager().getLaunchIntentForPackage(FREE_MY_TV);
-                start(home);
+                start(new Intent(context, HomeSetup.class));
                 open = false;
                 break;
             default:
@@ -116,29 +111,6 @@ final class Corner {
                 open = false;
                 break;
         }
-    }
-
-    /** Free My TV does it (it has the TV's ADB) and answers through CornerReceiver; it checks the ask is ours. */
-    private void askFreeMemory() {
-        Intent ask = new Intent("io.freemytv.FREE_MEMORY").setPackage(FREE_MY_TV);
-        try {
-            if (Build.VERSION.SDK_INT >= 34) {
-                context.sendBroadcast(ask, null,
-                        android.app.BroadcastOptions.makeBasic().setShareIdentityEnabled(true).toBundle());
-            } else {
-                context.sendBroadcast(ask);
-            }
-        } catch (RuntimeException e) {
-            freeing = false;
-            show("Free My TV isn't installed", 5_000);
-            return;
-        }
-        handler.postDelayed(() -> {
-            if (!freeing) return;
-            freeing = false;
-            show("Free My TV didn't answer", 5_000);
-            redraw.run();
-        }, 15_000);
     }
 
     private void show(String s, long ms) {
