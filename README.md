@@ -48,8 +48,9 @@ You need a computer on the same Wi-Fi as the TV, with [adb](https://developer.an
    On the TV's **Allow USB debugging?**, tick **Always allow** and pick **Allow**. If the install seems stuck, look at
    the TV: Google Play Protect may say *Risky app blocked*; pick *More details* > *Install anyway*.
 4. **Turn on Free My TV mode:** on the TV, open Free My TV, then **Home Screen > Free My TV**. Allow USB debugging
-   again if the TV asks (this time it's Free My TV itself). It turns off Ambient mode and Play Games (the TV turns them
-   back on at start, and Free My TV turns them off again) and becomes the screensaver. Google TV's home stays on.
+   again if the TV asks (this time it's Free My TV itself). It turns off Ambient mode, Play Games and **Google Assistant**,
+   to save memory on a 2 GB TV (the TV turns them back on at start, and Free My TV turns them off again), and becomes
+   the screensaver. With Assistant off, the remote's mic button doesn't work. Google TV's home stays on.
 5. **Then install ps5UI:**
    ```bash
    adb install -r ps5UI-1.0.apk
@@ -63,8 +64,9 @@ holding Home for a moment opens Free My TV's Control Center.
 **Undo:** Free My TV > Home Screen > **Original** puts everything back; then uninstall both in Settings > Apps.
 
 Notes:
-- This Free My TV is the one on the tested TV, with Google Assistant left on. Its weather and sunset are set for
-  Bengaluru and its picks for India (it's built that way; rebuild from source to change them). Its changes to Free
+- This Free My TV is exactly the one on the tested TV. It's built to turn Google Assistant off, its weather and sunset
+  are set for Bengaluru, and its picks for India. To change any of that, rebuild it from source (Free My TV's
+  `config.properties`: `disable_assistant=false` keeps Assistant on). Its changes to Free
   My TV are in [`tested/free-my-tv-safe-mode.patch`](tested/free-my-tv-safe-mode.patch), against Free My TV's commit
   `f2d984c`, under Free My TV's MIT licence (see [LICENSE](LICENSE)).
 - ps5UI 1.0 and 1.1 are signed with different keys: to switch from one to the other, uninstall ps5UI first.
