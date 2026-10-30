@@ -1,0 +1,1023 @@
+diff --git a/app/AndroidManifest.xml b/app/AndroidManifest.xml
+index 8486762..11f2850 100644
+--- a/app/AndroidManifest.xml
++++ b/app/AndroidManifest.xml
+@@ -20,6 +20,8 @@
+          returns null). The shelf and streaming apps, the live TV apps and, through the <intent>, every TV app
+          (for "All Apps"). -->
+     <queries>
++        <!-- ps5UI, for its account corner (the account in use, Free Memory's answer) -->
++        <package android:name="io.freemytv.cinema" />
+         <package android:name="com.netflix.ninja" />
+         <package android:name="com.google.android.youtube.tv" />
+         <package android:name="com.amazon.firetv.youtube" />
+@@ -61,6 +63,13 @@
+             <action android:name="android.intent.action.VIEW" />
+             <data android:scheme="content" android:host="android.media.tv" />
+         </intent>
++        <!-- Google TV's account picker, opened when the TV starts or wakes (RemoteKeys.openProfiles) -->
++        <package android:name="com.google.android.apps.tv.launcherx" />
++        <!-- Home Settings > Home Button: the other home screens installed (some are only that, with no app icon) -->
++        <intent>
++            <action android:name="android.intent.action.MAIN" />
++            <category android:name="android.intent.category.HOME" />
++        </intent>
+     </queries>
+ 
+     <uses-feature android:name="android.software.leanback" android:required="false" />
+@@ -192,6 +201,15 @@
+             android:process=":sleep"
+             android:exported="false" />
+ 
++        <!-- ps5UI's corner asks for Free Memory here (RequestReceiver checks it's ps5UI) -->
++        <receiver
++            android:name=".RequestReceiver"
++            android:process=":keys"
++            android:exported="true">
++            <intent-filter>
++                <action android:name="io.freemytv.FREE_MEMORY" />
++            </intent-filter>
++        </receiver>
+         <receiver
+             android:name=".HomeReceiver"
+             android:exported="false">
+diff --git a/app/res/xml/remote_key_service.xml b/app/res/xml/remote_key_service.xml
+index 1c31d34..0023335 100644
+--- a/app/res/xml/remote_key_service.xml
++++ b/app/res/xml/remote_key_service.xml
+@@ -1,7 +1,8 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<!-- Only reads the remote's keys: no window content, no text. -->
++<!-- Reads the remote's keys and which screen is in front; no window content. On Google TV's account picker, the
++     name on the account focused or chosen (RemoteKeys.onAccount): only the name is kept, never the email. -->
+ <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:accessibilityEventTypes="typeWindowStateChanged"
++    android:accessibilityEventTypes="typeWindowStateChanged|typeViewClicked|typeViewFocused"
+     android:accessibilityFeedbackType="feedbackGeneric"
+     android:accessibilityFlags="flagRequestFilterKeyEvents"
+     android:canRequestFilterKeyEvents="true"
+diff --git a/app/src/io/freemytv/HomeApps.java b/app/src/io/freemytv/HomeApps.java
+index c67342d..940abc0 100644
+--- a/app/src/io/freemytv/HomeApps.java
++++ b/app/src/io/freemytv/HomeApps.java
+@@ -58,6 +58,8 @@ final class HomeApps {
+     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5, DEVICE = 6;
+     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
+     static final int INPUTS = 7;
++    /** Free Memory in the drawer (MemoryCleaner; the home screen handles it). Needs the TV's own ADB. */
++    static final int CLEAN = 8;
+     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
+     static final int TILE_W = 384, TILE_H = 216;
+ 
+@@ -297,6 +299,7 @@ final class HomeApps {
+         items.add(shortcut(ALL_APPS, "all", Ui.tr("All Apps"), "apps"));
+         items.add(shortcut(SETTINGS, "settings", Ui.tr("Home Settings"), "settings"));
+         items.add(shortcut(ANDROID_SETTINGS, "tv-settings", Ui.tr("TV Settings"), "tv_settings"));
++        if (Capabilities.adb(c)) items.add(shortcut(CLEAN, "clean", Ui.tr("Free Memory"), "sparkles"));
+         // HY300 projectors (Hotack, Allwinner H713): keystone and focus live in the maker's settings app, and the
+         // stock home screen was the only way to its Miracast receiver. Each shows only where the TV has it.
+         device(c, items, "keystone", Ui.tr("Keystone"), "keystone", new Intent("action.htcsettings.prjsettings"));
+diff --git a/app/src/io/freemytv/HomeData.java b/app/src/io/freemytv/HomeData.java
+index e15ee6e..10b8eaa 100644
+--- a/app/src/io/freemytv/HomeData.java
++++ b/app/src/io/freemytv/HomeData.java
+@@ -338,7 +338,7 @@ final class HomeData {
+      * Uses the last weather fetched (it moves ~1 min a day); without data, 6:00 and 18:00.
+      */
+     boolean isNight(long now) {
+-        return isNight(Prefs.theme(), now, weather.sunrise, weather.sunset);
++        return isNight(Prefs.effectiveTheme(), now, weather.sunrise, weather.sunset);
+     }
+ 
+     /** The same from what it depends on (SleepOverlay gets these in its Intent). */
+diff --git a/app/src/io/freemytv/HomeMode.java b/app/src/io/freemytv/HomeMode.java
+index d1d01c2..652bb1e 100644
+--- a/app/src/io/freemytv/HomeMode.java
++++ b/app/src/io/freemytv/HomeMode.java
+@@ -56,6 +56,13 @@ final class HomeMode {
+      * (Android 9) has the same setup app without a home screen: there it is left alone.
+      */
+     static final String GOOGLE_SETUP = "com.google.android.tungsten.setupwraith";
++    /**
++     * Acer R4G (R4_GTV, the Kalley's R3_GTV's sibling) also turns the setup app back on at every start: it stays on
++     * there, and so the switch also keeps Google TV's home screen on. That one's HOME filter (priority 2) outranks ours,
++     * so the remote's Home key comes to us through RemoteKeyService instead. YouTube Music stays on there too.
++     */
++    static final boolean ACER_R4G = "R4_GTV".equals(Build.DEVICE);
++    static final String YOUTUBE_MUSIC = "com.google.android.youtube.tvmusic";
+     /**
+      * Some HY300 projectors (Amlogic txhd2, Android 13) answer the Home button with JmLauncher, not the default home:
+      * it opens the package in JM_HOME, else the HTC home screen, and with that one off and the property empty, a black
+@@ -244,11 +251,14 @@ final class HomeMode {
+      * boot check and an update turn it back on.
+      */
+     static void ensureRemoteService(Context c, long delayMs) {
+-        if (RemoteKeys.supported()) ModeJob.schedule(c, ModeJob.REMOTE, null, delayMs);
++        if (RemoteKeys.service()) ModeJob.schedule(c, ModeJob.REMOTE, null, delayMs);
+     }
+ 
+     static void ensureRemoteServiceNow(Context app) {
+-        if (!RemoteKeys.supported() || !FREE.equals(state(app).optString("mode"))) return;
++        JSONObject s = state(app);
++        if (!RemoteKeys.service() || !FREE.equals(s.optString("mode"))) return;
++        // After the watchdog gave the home screen back, Home must not lead to ours again.
++        if (RemoteKeys.HOME_KEY && s.optBoolean("homeReverted")) return;
+         try (Adb adb = Adb.connect(app, 10_000, null)) {
+             remoteService(app, adb, true);
+         } catch (IOException e) {
+@@ -409,7 +419,7 @@ final class HomeMode {
+             s.put("mode", FREE).put("since", System.currentTimeMillis()).put("homeReverted", false)
+                     .put("disabled", new JSONArray(sorted(disabled))).put("setupHome", setupHome);
+             save(c, s);
+-            if (RemoteKeys.supported()) {
++            if (RemoteKeys.service()) {
+                 try {
+                     remoteService(c, adb, true);
+                 } catch (IOException e) {
+@@ -575,6 +585,13 @@ final class HomeMode {
+                 record(adb, stillOff);
+                 // The screensaver first: if that fails, the revert isn't marked done and the next try does it again.
+                 restoreScreensaver(adb, s);
++                if (RemoteKeys.HOME_KEY) {
++                    try {
++                        remoteService(app, adb, false);
++                    } catch (IOException e) {
++                        AppLog.w("remote buttons service: " + e.getMessage());
++                    }
++                }
+                 SleepTimer.stop(app);   // its row shows Unavailable from now on
+                 s.put("homeReverted", true).put("disabled", kept);
+                 save(app, s);
+@@ -716,12 +733,13 @@ final class HomeMode {
+     private static List<String> targets(String home, String dream, boolean setupHome) {
+         List<String> out = new ArrayList<>();
+         String homePkg = home.contains("FallbackHome") ? null : packageOf(home);
+-        if (setupHome) out.add(GOOGLE_SETUP);
++        if (setupHome && !ACER_R4G) out.add(GOOGLE_SETUP);
+         if (homePkg != null && !homePkg.equals(PKG)) out.add(homePkg);
+         if (TV_LAUNCHER.equals(homePkg)) out.add(TV_RECOMMENDATIONS);
+         String dreamPkg = packageOf(dream);
+         if (dreamPkg != null && !dreamPkg.equals(PKG) && !dreamPkg.equals(homePkg)) out.add(dreamPkg);
+         out.addAll(Arrays.asList(DEBLOAT));
++        if (ACER_R4G) out.remove(YOUTUBE_MUSIC);
+         if (Config.DISABLE_ASSISTANT) out.addAll(Arrays.asList(ASSISTANT));
+         return out;
+     }
+diff --git a/app/src/io/freemytv/HomeView.java b/app/src/io/freemytv/HomeView.java
+index 9bd7c29..55166ee 100644
+--- a/app/src/io/freemytv/HomeView.java
++++ b/app/src/io/freemytv/HomeView.java
+@@ -130,6 +130,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
+     private static final long NIGHT_MS = 2000;
+     private boolean nightTarget;
+     private float night, nightFrom;     // 0 = day, 1 = night
++    private boolean styled;             // Home Settings > Style: an aurora sky instead of the plain background
+     private long nightAt;
+     private final int[] glassNight = new int[Backdrop.GW * Backdrop.GH], frostNight = new int[Backdrop.FW * Backdrop.FH];
+     private final int[] neutralGlassPx = new int[Backdrop.GW * Backdrop.GH], neutralFrostPx = new int[Backdrop.FW * Backdrop.FH];
+@@ -780,8 +781,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
+ 
+     private void updatePalette() {
+         HomeData.Weather wx = data.weather;
+-        Shaders.sky(scene.palette, System.currentTimeMillis(), wx.sunrise, wx.sunset);
++        long now = System.currentTimeMillis();
++        boolean was = styled;
++        styled = Shaders.style(scene.palette, Prefs.style(), now, wx.sunrise, wx.sunset);
++        if (!styled) Shaders.sky(scene.palette, now, wx.sunrise, wx.sunset);
+         scene.applyPalette();
++        if (!styled && !was) return;
++        // A Style's sky drifts a little at each tick (every 15 s), not every frame: a 2 GB TV's GPU stays free.
++        if (styled) scene.advance((now / 1000 % 86_400) * 0.02f);
++        nightChanged();
+     }
+ 
+     // MARK: - Recommendations: hero and background
+@@ -891,7 +899,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
+ 
+     /** No photo: the glass reads the background's own gray (not Scene's default aurora, which isn't on screen). */
+     private void neutralGlass() {
+-        if (!scene.shaded()) {   // Android 8 to 12: a gray image would be one more full-area pass for the flat look
++        if (styled || !scene.shaded()) {   // a Style: the glass frosts the aurora on screen   // Android 8 to 12: a gray image would be one more full-area pass for the flat look
+             scene.clearFrost();
+             scene.clearGlass();
+             nightPair = false;
+@@ -2304,6 +2312,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
+             retarget(false);
+             return;
+         }
++        if (it.kind == HomeApps.CLEAN) {
++            // Only the result (in ~2 s): a second toast would wait behind a first one.
++            MemoryCleaner.clean(activity, this::showToast);
++            return;
++        }
+         boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top),
+                 Math.round(r.width()), Math.round(r.height()));
+         if (!opened) showToast(Ui.trf("Couldn't open {app}.", "app", it.label));
+@@ -2840,7 +2853,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
+         boolean fading = bgFadeAt != 0;
+         // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
+         android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
+-        if (bgTo == null || (fading && bgFrom == null)) {
++        if (styled && (bgTo == null || (fading && bgFrom == null))) {
++            scene.drawBackground(c);
++            float amount = tone(0.32f, 0.42f) * Ui.clamp(drawer.value);
++            if (amount > 0.002f) {
++                fill.setColor(Ui.alpha(blend(0xFFFFFFFF, 0xFF000000, night), amount));
++                c.drawRect(screen, fill);
++            }
++        } else if (bgTo == null || (fading && bgFrom == null)) {
+             if (lightGradient == null) lightGradient = Ui.gradient(h, 0xFFF5F5F7, 0xFFE2E2E7);
+             if (nightGradient == null) nightGradient = Ui.gradient(h, 0xFF1C1C1E, 0xFF0B0B0D);
+             fill.setColorFilter(v);
+diff --git a/app/src/io/freemytv/Prefs.java b/app/src/io/freemytv/Prefs.java
+index 74d950b..5715b44 100644
+--- a/app/src/io/freemytv/Prefs.java
++++ b/app/src/io/freemytv/Prefs.java
+@@ -119,6 +119,21 @@ final class Prefs {
+ 
+     static void setTheme(String v) { put("theme", v); }
+ 
++    /** Home Settings > Style: "classic" (the plain background, light or dark by Theme), or an aurora sky (Shaders.style). */
++    static final String[] STYLES = {"classic", "sky", "aurora", "sunset", "ocean", "forest", "rose"};
++
++    static String style() {
++        String v = sp().getString("style", "classic");
++        return java.util.Arrays.asList(STYLES).contains(v) ? v : "classic";
++    }
++
++    static void setStyle(String v) { put("style", v); }
++
++    /** The theme the glass follows: the skies are dark, so with one the home screen keeps its night look. */
++    static String effectiveTheme() {
++        return style().equals("classic") ? theme() : "dark";
++    }
++
+     // MARK: - City
+ 
+     static String city() { return sp().getString("city", Config.CITY).trim(); }
+@@ -289,4 +304,44 @@ final class Prefs {
+         for (int key : KEYS) sb.append(key).append('=').append(key == keyCode ? pkg : keyApp(key)).append('\n');
+         if (writeKeys(sb.toString())) version++;
+     }
++
++    // Home Settings > Home Button (RemoteKeys.HOME_KEY TVs): the home screen the Home key opens, as "package/activity";
++    // empty is ours. In a file of its own for the :keys process, read again only when it changes, like the keys above.
++    private static String homeApp = "";
++    private static long homeStamp = Long.MIN_VALUE;
++
++    private static File homeFile() {
++        return new File(app.getFilesDir(), "home-app.txt");
++    }
++
++    static String homeApp() {
++        synchronized (KEYS) {
++            File f = homeFile();
++            long stamp = f.lastModified() * 31 + f.length();
++            if (stamp != homeStamp) {
++                homeStamp = stamp;
++                homeApp = "";
++                if (stamp != 0) {
++                    try (BufferedReader r = new BufferedReader(new FileReader(f))) {
++                        String line = r.readLine();
++                        homeApp = line == null ? "" : line.trim();
++                    } catch (IOException ignored) {}
++                }
++            }
++            return homeApp;
++        }
++    }
++
++    static void setHomeApp(String component) {
++        File tmp = new File(app.getFilesDir(), "home-app." + android.os.Process.myPid() + ".tmp");
++        try (FileOutputStream out = new FileOutputStream(tmp)) {
++            out.write((component + "\n").getBytes(StandardCharsets.UTF_8));
++            out.getFD().sync();
++        } catch (IOException e) {
++            //noinspection ResultOfMethodCallIgnored
++            tmp.delete();
++            return;
++        }
++        if (tmp.renameTo(homeFile())) version++;
++    }
+ }
+diff --git a/app/src/io/freemytv/RemoteKeyService.java b/app/src/io/freemytv/RemoteKeyService.java
+index db7739d..db5c1fe 100644
+--- a/app/src/io/freemytv/RemoteKeyService.java
++++ b/app/src/io/freemytv/RemoteKeyService.java
+@@ -1,19 +1,49 @@
+ package io.freemytv;
+ 
+ import android.accessibilityservice.AccessibilityService;
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.os.SystemClock;
+ import android.view.KeyEvent;
+ import android.view.accessibility.AccessibilityEvent;
+ 
+ /**
+  * Sees the remote's keys before any app does, so the app buttons work from inside Netflix, Disney and the rest. The
+  * system waits for it on every key (up to half a second), so it runs in a process of its own and does next to nothing.
++ * On RemoteKeys.HOME_KEY TVs it also hears the TV start and wake, for Google TV's account picker.
+  */
+ public class RemoteKeyService extends AccessibilityService {
++    private final BroadcastReceiver screenOn = new BroadcastReceiver() {
++        @Override public void onReceive(Context c, Intent i) {
++            RemoteKeys.onTvOn(RemoteKeyService.this);
++        }
++    };
++    private boolean listening;
++
++    @Override protected void onServiceConnected() {
++        super.onServiceConnected();
++        if (!RemoteKeys.HOME_KEY) return;
++        registerReceiver(screenOn, new IntentFilter(Intent.ACTION_SCREEN_ON));
++        listening = true;
++        // Connected in the first minutes after boot: the TV just started (not an app update or a mode switch).
++        if (SystemClock.elapsedRealtime() < 3 * 60_000) RemoteKeys.onTvOn(this);
++    }
++
++    @Override public void onDestroy() {
++        if (listening) unregisterReceiver(screenOn);
++        super.onDestroy();
++    }
++
+     @Override protected boolean onKeyEvent(KeyEvent event) {
+         return RemoteKeys.onKey(this, event);
+     }
+ 
+-    @Override public void onAccessibilityEvent(AccessibilityEvent event) {}
++    @Override public void onAccessibilityEvent(AccessibilityEvent event) {
++        RemoteKeys.onWindow(this, event);
++        RemoteKeys.onAccount(this, event);
++    }
+ 
+     @Override public void onInterrupt() {}
+ }
+diff --git a/app/src/io/freemytv/RemoteKeys.java b/app/src/io/freemytv/RemoteKeys.java
+index d4a1a13..ca7025e 100644
+--- a/app/src/io/freemytv/RemoteKeys.java
++++ b/app/src/io/freemytv/RemoteKeys.java
+@@ -4,8 +4,10 @@ import android.content.Context;
+ import android.content.Intent;
+ import android.content.pm.PackageManager;
+ import android.os.Build;
++import android.os.SystemClock;
+ import android.view.InputDevice;
+ import android.view.KeyEvent;
++import android.view.accessibility.AccessibilityEvent;
+ 
+ /**
+  * The remote's app buttons on TCL TVs. The stock home screen opens the apps for Netflix, YouTube and Prime (and TCL
+@@ -45,12 +47,198 @@ final class RemoteKeys {
+         return TCL || STEM_NETFLIX || KTC || SONY || XIAOMI;
+     }
+ 
++    /**
++     * TVs where Google TV's home screen stays on (HomeMode.ACER_R4G) and its HOME filter outranks ours: the remote's
++     * Home key opens our home screen through the key filter, before the system sends it there.
++     */
++    static final boolean HOME_KEY = HomeMode.ACER_R4G;
++
++    /** Whether RemoteKeyService runs in Free My TV mode: for the app buttons, or for the Home key. */
++    static boolean service() {
++        return supported() || HOME_KEY;
++    }
++
++    private static final String GOOGLE_HOME_CLASS = "com.google.android.apps.tv.launcherx.home.HomeActivity";
++    /** Google TV's "Choose an account" screen (its profiles are the TV's Google accounts). */
++    static final String PROFILES = "com.google.android.apps.tv.launcherx/.profile.chooser.ProfileChooserActivity";
++    private static final String PROFILES_CLASS = "com.google.android.apps.tv.launcherx.profile.chooser.ProfileChooserActivity";
++    /** The TV just started or woke: the next home screen to come up is the account picker instead. */
++    private static boolean profilesDue;
++    /** The screen in front (its class), from the window events; when we opened the picker, and when it showed. */
++    private static String front = "";
++    private static long pickerOpenedAt, pickerShownAt;
++    private static int pickerRetries;
++    /**
++     * How long Google TV's home must stay in front before ours replaces it. On waking, Google TV brings its home up,
++     * then a dispatcher, then its home again with everything above it cleared, over about two seconds: acting on the
++     * first one, the account picker opened in between and was closed at once (Oct 2026). So while the picker is due
++     * (just woken), wait until it settles; otherwise (after a pick, backing out of an app) a moment is enough.
++     */
++    private static final long SETTLE_WOKEN_MS = 2_500, SETTLE_MS = 300;
++    private static Context settleContext;
++    private static final Runnable SETTLED = () -> {
++        if (!GOOGLE_HOME_CLASS.equals(front) || settleContext == null) return;   // something else came up meanwhile
++        if (profilesDue) {
++            profilesDue = false;
++            openProfiles(settleContext);
++        } else {
++            openHome(settleContext);
++        }
++    };
++    /** How long Home is held for the Control Center. */
++    private static final long HOLD_MS = 600;
++    private static final android.os.Handler HANDLER = new android.os.Handler(android.os.Looper.getMainLooper());
++    private static Runnable hold;
++    private static boolean held;
++
++    /**
++     * On HOME_KEY TVs, Google TV's home screen still comes up after a start, on waking and when backing out of an app
++     * (its HOME filter outranks ours): when it does, ours opens instead.
++     */
++    static void onWindow(Context c, AccessibilityEvent e) {
++        if (!HOME_KEY || e.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
++        CharSequence cls = e.getClassName(), pkg = e.getPackageName();
++        if (cls == null || pkg == null) return;
++        String name = cls.toString();
++        // System UI's panels and plain views (volume, dialogs' frames) come and go over a screen: not screens.
++        if ("com.android.systemui".contentEquals(pkg) || name.startsWith("android.widget.") || name.startsWith("android.view.")) return;
++        long now = SystemClock.elapsedRealtime();
++        front = name;
++        if (name.equals(PROFILES_CLASS)) pickerShownAt = now;
++        HANDLER.removeCallbacks(SETTLED);
++        if (!name.equals(GOOGLE_HOME_CLASS)) return;
++        // The picker we opened, closed again by Google TV before anyone could choose (it never showed, or showed
++        // for a moment): it's still due. Twice at most, so Google TV can't keep us at it.
++        if (pickerOpenedAt != 0 && now - pickerOpenedAt < 6_000 && pickerRetries < 2
++                && (pickerShownAt < pickerOpenedAt || now - pickerShownAt < 1_500)) {
++            profilesDue = true;
++            pickerRetries++;
++            AppLog.w("account picker closed by Google TV at once: again");
++        }
++        settleContext = c;
++        HANDLER.postDelayed(SETTLED, profilesDue ? SETTLE_WOKEN_MS : SETTLE_MS);
++    }
++
++    /** The account picker's buttons read "Name, email, : select to continue with current account" (or "to log in"). */
++    private static final java.util.regex.Pattern ACCOUNT = java.util.regex.Pattern.compile("^([^,@]+), [^,\\s]+@[^,\\s]+,");
++    static final String CINEMA = "io.freemytv.cinema";
++    private static String account = "";
++
++    /**
++     * Who uses the TV, for ps5UI's corner (io.freemytv.cinema): on Google TV's account picker, the account chosen, or
++     * the one focused that is already in use. Only the name is taken from the button (never the email) and handed to
++     * ps5UI; nothing else on any screen is read.
++     */
++    static void onAccount(Context c, AccessibilityEvent e) {
++        int type = e.getEventType();
++        if (!HOME_KEY || (type != AccessibilityEvent.TYPE_VIEW_CLICKED && type != AccessibilityEvent.TYPE_VIEW_FOCUSED)) return;
++        if (!PROFILES_CLASS.equals(front) || e.getContentDescription() == null) return;
++        String desc = e.getContentDescription().toString();
++        if (type == AccessibilityEvent.TYPE_VIEW_FOCUSED && !desc.contains("current account")) return;
++        java.util.regex.Matcher m = ACCOUNT.matcher(desc);
++        if (!m.find()) return;
++        String name = m.group(1).trim();
++        if (name.equals(account)) return;
++        account = name;
++        try {
++            c.sendBroadcast(new Intent(CINEMA + ".ACCOUNT").setPackage(CINEMA).putExtra("name", name));
++        } catch (RuntimeException ignored) {}   // ps5UI not installed
++    }
++
++    /**
++     * The TV started or woke (RemoteKeyService): Google TV's account picker first, as Google TV does, over whatever
++     * comes up; after a pick, Home leads to the home screen chosen in Home Settings > Home Button.
++     */
++    static void onTvOn(Context c) {
++        if (!HOME_KEY) return;
++        profilesDue = true;
++        pickerRetries = 0;
++        // Waking may resume an app instead of a home screen: open it over the app once the TV has settled. Over
++        // Google TV's home, the window events do it, once that has settled.
++        HANDLER.postDelayed(() -> {
++            if (!profilesDue || GOOGLE_HOME_CLASS.equals(front)) return;
++            profilesDue = false;
++            openProfiles(c);
++        }, 4_500);
++    }
++
++    static void openProfiles(Context c) {
++        try {
++            c.startActivity(new Intent().setComponent(android.content.ComponentName.unflattenFromString(PROFILES))
++                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++            pickerOpenedAt = SystemClock.elapsedRealtime();
++        } catch (android.content.ActivityNotFoundException | SecurityException e) {
++            AppLog.w("account picker won't open: " + e.getMessage());
++            openHome(c);
++        }
++    }
++
++    /**
++     * By name: a HOME intent would resolve to Google TV's home screen here. The one picked in Home Settings > Home
++     * Button, else ours (also when the picked one is gone or won't open).
++     */
++    private static void openHome(Context c) {
++        String picked = Prefs.homeApp();
++        android.content.ComponentName other = picked.isEmpty() ? null : android.content.ComponentName.unflattenFromString(picked);
++        if (other != null) {
++            try {
++                c.startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setComponent(other)
++                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++                return;
++            } catch (android.content.ActivityNotFoundException | SecurityException e) {
++                AppLog.w("home button: " + picked + " won't open, ours instead: " + e.getMessage());
++            }
++        }
++        c.startActivity(new Intent().setClassName(HomeMode.PKG, HomeMode.PKG + ".HomeActivity")
++                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++    }
++
++    /**
++     * The home screens Home can open: ours first, then every other app with one, except the TV's own (Google TV's,
++     * whose setup app and Settings' fallback are on the same list). Each as {"package/activity" or "" for ours, name}.
++     */
++    static java.util.List<String[]> homeChoices(Context c) {
++        java.util.List<String[]> out = new java.util.ArrayList<>();
++        out.add(new String[] {"", "Free My TV"});
++        PackageManager pm = c.getPackageManager();
++        Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
++        for (android.content.pm.ResolveInfo r : pm.queryIntentActivities(home, 0)) {
++            String pkg = r.activityInfo.packageName;
++            if (pkg.equals(HomeMode.PKG) || pkg.startsWith("com.google.android.") || pkg.equals("com.android.tv.settings")) continue;
++            out.add(new String[] {pkg + "/" + r.activityInfo.name, String.valueOf(r.loadLabel(pm))});
++        }
++        return out;
++    }
++
+     private static boolean is(String maker) {
+         return maker.equalsIgnoreCase(Build.MANUFACTURER) || maker.equalsIgnoreCase(Build.BRAND);
+     }
+ 
+     /** Opens the app for this key on its first press. True if the key is ours and in use (it is then consumed). */
+     static boolean onKey(Context c, KeyEvent e) {
++        if (HOME_KEY && e.getKeyCode() == KeyEvent.KEYCODE_HOME) {
++            // A press opens our home screen when it ends; held, the Control Center opens instead (only the key
++            // filter, RemoteKeyService, sees Home, so it is always an AccessibilityService here).
++            if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
++                held = false;
++                if (c instanceof android.accessibilityservice.AccessibilityService) {
++                    android.accessibilityservice.AccessibilityService s = (android.accessibilityservice.AccessibilityService) c;
++                    hold = () -> {
++                        held = true;
++                        ControlCenter.show(s);
++                    };
++                    HANDLER.postDelayed(hold, HOLD_MS);
++                }
++            } else if (e.getAction() == KeyEvent.ACTION_UP) {
++                if (hold != null) HANDLER.removeCallbacks(hold);
++                hold = null;
++                if (!held) {
++                    ControlCenter.hide(c);
++                    openHome(c);
++                }
++            }
++            return true;
++        }
+         if (!supported()) return false;
+         // BUTTON_3 is also a game controller's button: keys from a gamepad or a joystick are left alone.
+         int source = e.getSource();
+diff --git a/app/src/io/freemytv/SettingsActivity.java b/app/src/io/freemytv/SettingsActivity.java
+index d025fe1..35ce318 100644
+--- a/app/src/io/freemytv/SettingsActivity.java
++++ b/app/src/io/freemytv/SettingsActivity.java
+@@ -83,6 +83,11 @@ public class SettingsActivity extends Activity {
+             view.pause();
+             showPreview();
+         }
++        // The Control Center's Sleep Timer: straight to that screen.
++        if (getIntent().getBooleanExtra("sleep", false)) {
++            getIntent().removeExtra("sleep");
++            view.openSleep();
++        }
+     }
+ 
+     @Override protected void onNewIntent(Intent intent) {
+@@ -210,10 +215,8 @@ public class SettingsActivity extends Activity {
+             super(a);
+             activity = a;
+             for (int i = 0; i < pop.length; i++) pop[i] = new Spring(0.28f, 0.85f, 0);
+-            HomeData.Weather wx = HomeData.get(a).weather;
+-            Shaders.sky(scene.palette, System.currentTimeMillis(), wx.sunrise, wx.sunset);
+             scene.setMotion(0.5f, 0.2f);
+-            scene.applyPalette();
++            updatePalette();
+             setFocusable(true);
+             setContentDescription("Free My TV");
+             // TalkBack: one item per row, id = row + 1.
+@@ -698,8 +701,11 @@ public class SettingsActivity extends Activity {
+         // MARK: - Home Settings and Remote Buttons
+ 
+         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
+-        /** Home Settings: language, temperature, theme, my photos, sounds, weather, city, quotes, then one row per coin. */
+-        private static final int PHOTOS_ROW = 3, CITY_ROW = 6, COIN_ROWS = 8;
++        /**
++         * Home Settings: language, temperature, theme, style, home button, my photos, sounds, weather, city, quotes, then
++         * one row per coin.
++         */
++        private static final int STYLE_ROW = 3, HOME_ROW = 4, PHOTOS_ROW = 5, CITY_ROW = 8, COIN_ROWS = 10;
+         /** Home Settings rows on screen at once (what fits above the hints at 1080p); a longer list scrolls. */
+         private static final int SETTINGS_VISIBLE = 10;
+ 
+@@ -712,6 +718,8 @@ public class SettingsActivity extends Activity {
+             l.add(Ui.tr("Language"));
+             l.add(Ui.tr("Temperature"));
+             l.add(Ui.tr("Theme"));
++            l.add(Ui.tr("Style"));
++            l.add(Ui.tr("Home Button"));
+             l.add(Ui.tr("My Photos"));
+             l.add(Ui.tr("Navigation sounds"));
+             l.add(Ui.tr("Weather widget"));
+@@ -733,18 +741,69 @@ public class SettingsActivity extends Activity {
+             v[1] = unit.equals("C") ? "°C" : unit.equals("F") ? "°F" : Ui.tr("unit|Automatic");
+             String theme = Prefs.theme();
+             v[2] = theme.equals("light") ? Ui.tr("Light") : theme.equals("dark") ? Ui.tr("Dark") : Ui.tr("Automatic");
++            v[STYLE_ROW] = styleName(Prefs.style());
++            v[HOME_ROW] = homeName();
+             int photos = Photos.files(getContext()).size();
+             v[PHOTOS_ROW] = photos == 0 ? Ui.tr("photos|None")
+                     : Prefs.photos() ? Ui.plural("plural|one:{n} photo|other:{n} photos", photos) : Ui.tr("Off");
+-            v[4] = onOff(Prefs.sounds());
+-            v[5] = onOff(Prefs.weather());
++            v[6] = onOff(Prefs.sounds());
++            v[7] = onOff(Prefs.weather());
+             v[CITY_ROW] = !cityStatus.isEmpty() ? cityStatus : Prefs.city().isEmpty() ? "—" : Prefs.city();
+-            v[7] = onOff(Prefs.quotes());
++            v[9] = onOff(Prefs.quotes());
+             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
+             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
+             return v;
+         }
+ 
++        private static String styleName(String style) {
++            switch (style) {
++                case "sky": return Ui.tr("Sky (follows the sun)");
++                case "aurora": return Ui.tr("Aurora");
++                case "sunset": return Ui.tr("Sunset");
++                case "ocean": return Ui.tr("Ocean");
++                case "forest": return Ui.tr("Forest");
++                case "rose": return Ui.tr("Rose");
++                default: return Ui.tr("Classic");
++            }
++        }
++
++        private List<String[]> homeChoices;
++        private long homeChoicesAt;
++
++        /** The installed home screens, asked of Android at most every 5 s (the values are read on every frame). */
++        private List<String[]> homeChoices() {
++            long now = SystemClock.uptimeMillis();
++            if (homeChoices == null || now - homeChoicesAt > 5_000) {
++                homeChoices = RemoteKeys.homeChoices(getContext());
++                homeChoicesAt = now;
++            }
++            return homeChoices;
++        }
++
++        /** The home screen Home opens, by name (Free My TV if the picked one is gone). */
++        private String homeName() {
++            String picked = Prefs.homeApp();
++            for (String[] choice : homeChoices()) if (choice[0].equals(picked)) return choice[1];
++            return "Free My TV";
++        }
++
++        void openSleep() {
++            pickScroll = 0;
++            screen = POWER;
++            focus = 0;
++            invalidate();
++        }
++
++        /** The settings' own sky: the chosen Style's, or the sun's. */
++        private void updatePalette() {
++            HomeData.Weather wx = HomeData.get(getContext()).weather;
++            long now = System.currentTimeMillis();
++            if (!Shaders.style(scene.palette, Prefs.style(), now, wx.sunrise, wx.sunset)) {
++                Shaders.sky(scene.palette, now, wx.sunrise, wx.sunset);
++            }
++            scene.applyPalette();
++        }
++
+         /** "auto", then English and every language with a catalogue. */
+         private static String[] languageChoices() {
+             String[] all = Ui.languages();
+@@ -991,14 +1050,29 @@ public class SettingsActivity extends Activity {
+                     SleepOverlay.update(getContext());   // the pill's glass follows
+                     break;
+                 }
++                case STYLE_ROW: {
++                    int at = java.util.Arrays.asList(Prefs.STYLES).indexOf(Prefs.style());
++                    Prefs.setStyle(Prefs.STYLES[(at + dir + Prefs.STYLES.length) % Prefs.STYLES.length]);
++                    updatePalette();   // a preview: this screen's sky changes with it
++                    SleepOverlay.update(getContext());
++                    break;
++                }
++                case HOME_ROW: {
++                    if (!RemoteKeys.HOME_KEY) return;   // elsewhere the system's Home button opens the default home
++                    List<String[]> choices = homeChoices();
++                    int at = 0;
++                    for (int i = 0; i < choices.size(); i++) if (choices.get(i)[0].equals(Prefs.homeApp())) at = i;
++                    Prefs.setHomeApp(choices.get((at + dir + choices.size()) % choices.size())[0]);
++                    return;
++                }
+                 case PHOTOS_ROW:
+                     if (Photos.files(getContext()).isEmpty()) return;
+                     Prefs.setPhotos(!Prefs.photos());
+                     return;
+-                case 4: Prefs.setSounds(!Prefs.sounds()); break;
+-                case 5: Prefs.setWeather(!Prefs.weather()); break;
++                case 6: Prefs.setSounds(!Prefs.sounds()); break;
++                case 7: Prefs.setWeather(!Prefs.weather()); break;
+                 case CITY_ROW: return;
+-                case 7: Prefs.setQuotes(!Prefs.quotes()); break;
++                case 9: Prefs.setQuotes(!Prefs.quotes()); break;
+                 default:
+                     if (!Prefs.quotes()) return;
+                     Prefs.setCoin(row - COIN_ROWS, !Prefs.coin(row - COIN_ROWS));
+diff --git a/app/src/io/freemytv/Shaders.java b/app/src/io/freemytv/Shaders.java
+index 8757905..e1fdc06 100644
+--- a/app/src/io/freemytv/Shaders.java
++++ b/app/src/io/freemytv/Shaders.java
+@@ -337,6 +337,30 @@ final class Shaders {
+         return ((c.get(java.util.Calendar.HOUR_OF_DAY) * 60L + c.get(java.util.Calendar.MINUTE)) * 60 + c.get(java.util.Calendar.SECOND)) * 1000L;
+     }
+ 
++    // Home Settings > Style: fixed skies for the home screen's background.
++    private static final int[] OCEAN = {0x041A24, 0x0E6B7A, 0x3FC1B0};
++    private static final int[] FOREST = {0x07160F, 0x1F5A3A, 0x7DBB6A};
++    private static final int[] ROSE = {0x1A0B1E, 0x7A2E5C, 0xE58BA8};
++
++    /**
++     * Palette for a Home Settings > Style (Prefs.STYLES); false for "classic", the plain light or dark background,
++     * which leaves `out` as it was.
++     */
++    static boolean style(Palette out, String style, long now, long sunrise, long sunset) {
++        int[] p;
++        switch (style) {
++            case "sky": sky(out, now, sunrise, sunset); return true;
++            case "aurora": p = NIGHT; break;
++            case "sunset": p = SUNSET; break;
++            case "ocean": p = OCEAN; break;
++            case "forest": p = FOREST; break;
++            case "rose": p = ROSE; break;
++            default: return false;
++        }
++        out.set(p[0], p[1], p[2]);
++        return true;
++    }
++
+     /** Screensaver: always the night palette, by day and by night. */
+     static void dream(Palette out) {
+         out.set(NIGHT[0], NIGHT[1], NIGHT[2]);
+diff --git a/app/src/io/freemytv/SleepOverlay.java b/app/src/io/freemytv/SleepOverlay.java
+index 7580179..9c5a143 100644
+--- a/app/src/io/freemytv/SleepOverlay.java
++++ b/app/src/io/freemytv/SleepOverlay.java
+@@ -59,7 +59,7 @@ public class SleepOverlay extends Service {
+     static void update(Context c) {
+         HomeData.Weather w = HomeData.get(c).weather;
+         Intent i = new Intent(c, SleepOverlay.class).putExtra("endsAt", Prefs.sleepAt()).putExtra("place", Prefs.sleepPlace())
+-                .putExtra("theme", Prefs.theme()).putExtra("sunrise", w.sunrise).putExtra("sunset", w.sunset)
++                .putExtra("theme", Prefs.effectiveTheme()).putExtra("sunrise", w.sunrise).putExtra("sunset", w.sunset)
+                 .putExtra("language", Prefs.language());
+         boolean wanted = Prefs.sleepShown() && SleepTimer.minutesLeft(c) > 0;
+         if (wanted && Settings.canDrawOverlays(c)) {
+diff --git a/app/src/io/freemytv/ControlCenter.java b/app/src/io/freemytv/ControlCenter.java
+new file mode 100644
+index 0000000..b6bbe4c
+--- /dev/null
++++ b/app/src/io/freemytv/ControlCenter.java
+@@ -0,0 +1,132 @@
++package io.freemytv;
++
++import android.accessibilityservice.AccessibilityService;
++import android.content.Context;
++import android.content.Intent;
++import android.graphics.PixelFormat;
++import android.graphics.drawable.BitmapDrawable;
++import android.graphics.drawable.GradientDrawable;
++import android.provider.Settings;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.KeyEvent;
++import android.view.View;
++import android.view.WindowManager;
++import android.widget.LinearLayout;
++import android.widget.TextView;
++
++/**
++ * Holding Home (RemoteKeys.HOME_KEY TVs): a panel over whatever is on screen, with Free Memory, the Sleep Timer and the
++ * TV's picture, sound and input screens. Drawn by RemoteKeyService as an accessibility overlay (no permission to ask),
++ * in the :keys process, with plain views; Back or Home closes it.
++ */
++final class ControlCenter {
++    private ControlCenter() {}
++
++    private static LinearLayout panel;
++    private static TextView memoryRow;
++
++    static boolean showing() {
++        return panel != null;
++    }
++
++    static void show(AccessibilityService s) {
++        if (panel != null) return;
++        Ui.init(s);   // this process doesn't load the fonts and the language until it needs them
++        float k = s.getResources().getDisplayMetrics().widthPixels / 1920f;
++        panel = new LinearLayout(s) {
++            @Override public boolean dispatchKeyEvent(KeyEvent e) {
++                if (e.getKeyCode() != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(e);
++                if (e.getAction() == KeyEvent.ACTION_UP) hide(s);
++                return true;
++            }
++        };
++        panel.setOrientation(LinearLayout.VERTICAL);
++        int pad = Math.round(28 * k);
++        panel.setPadding(pad, pad, pad, pad);
++        GradientDrawable glass = new GradientDrawable();
++        glass.setColor(0xE61C1C1E);
++        glass.setCornerRadius(36 * k);
++        panel.setBackground(glass);
++
++        TextView title = text(s, Ui.tr("Control Center"), 30 * k, k);
++        title.setPadding(Math.round(20 * k), 0, 0, Math.round(16 * k));
++        panel.addView(title);
++        memoryRow = row(s, k, "sparkles", Ui.tr("Free Memory"), v -> {
++            memoryRow.setText(Ui.tr("Freeing memory…"));
++            MemoryCleaner.clean(s, text -> {
++                if (memoryRow != null) memoryRow.setText(text);
++            });
++        });
++        row(s, k, "home", Ui.tr("Switch Account"), v -> {
++            hide(s);
++            RemoteKeys.openProfiles(s);
++        });
++        row(s, k, "bedtime", Ui.tr("Sleep Timer"), v -> open(s, new Intent().setClassName(HomeMode.PKG,
++                HomeMode.PKG + ".SettingsActivity").putExtra("sleep", true)));
++        row(s, k, "tv_settings", Ui.tr("Picture"), v -> open(s, new Intent(Settings.ACTION_DISPLAY_SETTINGS)));
++        row(s, k, "speaker", Ui.tr("Sound"), v -> open(s, new Intent(Settings.ACTION_SOUND_SETTINGS)));
++        row(s, k, "hdmi", Ui.tr("Inputs"), v -> open(s, new Intent("com.android.tv.action.VIEW_INPUTS")));
++        row(s, k, "settings", Ui.tr("Home Settings"), v -> open(s, new Intent().setClassName(HomeMode.PKG,
++                HomeMode.PKG + ".SettingsActivity")));
++
++        WindowManager.LayoutParams layout = new WindowManager.LayoutParams(Math.round(560 * k),
++                WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
++                WindowManager.LayoutParams.FLAG_DIM_BEHIND, PixelFormat.TRANSLUCENT);
++        layout.gravity = Gravity.RIGHT | Gravity.CENTER_VERTICAL;
++        layout.x = Math.round(48 * k);
++        layout.dimAmount = 0.35f;
++        s.getSystemService(WindowManager.class).addView(panel, layout);
++        panel.getChildAt(1).requestFocus();
++    }
++
++    static void hide(Context c) {
++        if (panel == null) return;
++        try {
++            c.getSystemService(WindowManager.class).removeView(panel);
++        } catch (IllegalArgumentException ignored) {}   // already gone with its window
++        panel = null;
++        memoryRow = null;
++    }
++
++    private static void open(AccessibilityService s, Intent intent) {
++        hide(s);
++        if (intent.resolveActivity(s.getPackageManager()) == null) return;
++        s.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++    }
++
++    /** One row: a symbol and its name; white with dark ink while focused, like the settings screen. */
++    private static TextView row(Context c, float k, String symbol, String label, View.OnClickListener click) {
++        TextView t = text(c, label, 26 * k, k);
++        t.setPadding(Math.round(20 * k), Math.round(16 * k), Math.round(20 * k), Math.round(16 * k));
++        BitmapDrawable icon = new BitmapDrawable(c.getResources(), Symbols.get(c, symbol));
++        icon.setBounds(0, 0, Math.round(30 * k), Math.round(30 * k));
++        icon.setTint(0xEBFFFFFF);
++        t.setCompoundDrawables(icon, null, null, null);
++        t.setCompoundDrawablePadding(Math.round(18 * k));
++        GradientDrawable bg = new GradientDrawable();
++        bg.setCornerRadius(18 * k);
++        bg.setColor(0x00000000);
++        t.setBackground(bg);
++        t.setFocusable(true);
++        t.setClickable(true);
++        t.setOnClickListener(click);
++        t.setOnFocusChangeListener((v, has) -> {
++            bg.setColor(has ? 0xFFF5F5F7 : 0x00000000);
++            t.setTextColor(has ? 0xFF1D1D1F : 0xEBFFFFFF);
++            icon.setTint(has ? 0xFF1D1D1F : 0xEBFFFFFF);
++        });
++        panel.addView(t);
++        return t;
++    }
++
++    private static TextView text(Context c, String s, float px, float k) {
++        TextView t = new TextView(c);
++        t.setText(s);
++        t.setTypeface(Ui.regular);
++        t.setTextSize(TypedValue.COMPLEX_UNIT_PX, px);
++        t.setTextColor(0xEBFFFFFF);
++        t.setSingleLine(true);
++        return t;
++    }
++}
+diff --git a/app/src/io/freemytv/MemoryCleaner.java b/app/src/io/freemytv/MemoryCleaner.java
+new file mode 100644
+index 0000000..7cbdcff
+--- /dev/null
++++ b/app/src/io/freemytv/MemoryCleaner.java
+@@ -0,0 +1,61 @@
++package io.freemytv;
++
++import android.content.Context;
++import android.os.Handler;
++import android.os.Looper;
++import android.os.SystemClock;
++
++import java.io.IOException;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/**
++ * Free Memory (the drawer, the Control Center, and ps5UI's corner through RequestReceiver): closes the apps Android
++ * keeps waiting in the background, through the TV's own ADB (`am kill-all` stops only those it may: nothing on screen,
++ * playing or needed by the system). On a 2 GB TV that gives the next app room before it starts.
++ */
++final class MemoryCleaner {
++    private MemoryCleaner() {}
++
++    interface Done {
++        void done(String text);
++    }
++
++    private static final Pattern AVAILABLE = Pattern.compile("MemAvailable:\\s+(\\d+) kB");
++    private static final AtomicBoolean running = new AtomicBoolean();
++
++    /**
++     * Frees what it can on a background thread; `done` gets the result on the main thread. One at a time: false (and
++     * no `done`) while one is already running.
++     */
++    static boolean clean(Context c, Done done) {
++        if (!running.compareAndSet(false, true)) return false;
++        Context app = c.getApplicationContext();
++        Handler main = new Handler(Looper.getMainLooper());
++        new Thread(() -> {
++            String text;
++            try (Adb adb = Adb.connect(app, 10_000, null)) {
++                long before = available(adb);
++                adb.shell("am kill-all");
++                SystemClock.sleep(1_500);   // the killed processes take a moment to give their memory back
++                long after = available(adb);
++                text = Ui.trf("Freed {freed} MB · {free} MB free", "freed", Math.max(0, after - before), "free", after);
++                AppLog.w("free memory: " + before + " → " + after + " MB");
++            } catch (IOException e) {
++                AppLog.w("free memory: " + e.getMessage());
++                text = Ui.tr("Couldn't free memory: it needs Free My TV mode.");
++            }
++            running.set(false);
++            String result = text;
++            main.post(() -> done.done(result));
++        }, "free-memory").start();
++        return true;
++    }
++
++    /** MemAvailable, in MB. */
++    private static long available(Adb adb) throws IOException {
++        Matcher m = AVAILABLE.matcher(adb.shell("cat /proc/meminfo"));
++        return m.find() ? Long.parseLong(m.group(1)) / 1024 : 0;
++    }
++}
+diff --git a/app/src/io/freemytv/RequestReceiver.java b/app/src/io/freemytv/RequestReceiver.java
+new file mode 100644
+index 0000000..44da40b
+--- /dev/null
++++ b/app/src/io/freemytv/RequestReceiver.java
+@@ -0,0 +1,36 @@
++package io.freemytv;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.os.Build;
++
++/**
++ * Requests from ps5UI (io.freemytv.cinema, its account corner): Free Memory, answered with the result. Only ps5UI may
++ * ask (Android 14 says who sent a broadcast when the sender shares it, as ps5UI does). Runs in the :keys process,
++ * where the Control Center's Free Memory runs too, so `am kill-all` never takes it down halfway.
++ */
++public class RequestReceiver extends BroadcastReceiver {
++    static final String FREE_MEMORY = "io.freemytv.FREE_MEMORY";
++
++    @Override public void onReceive(Context context, Intent intent) {
++        if (!FREE_MEMORY.equals(intent.getAction())) return;
++        if (Build.VERSION.SDK_INT >= 34 && !RemoteKeys.CINEMA.equals(getSentFromPackage())) {
++            AppLog.w("free memory asked by " + getSentFromPackage() + ": ignored");
++            return;
++        }
++        PendingResult result = goAsync();
++        boolean started = MemoryCleaner.clean(context, text -> {
++            answer(context, text);
++            result.finish();
++        });
++        if (!started) {
++            answer(context, "");   // one is already running: ps5UI says so
++            result.finish();
++        }
++    }
++
++    private static void answer(Context c, String text) {
++        c.sendBroadcast(new Intent(RemoteKeys.CINEMA + ".FREED").setPackage(RemoteKeys.CINEMA).putExtra("text", text));
++    }
++}

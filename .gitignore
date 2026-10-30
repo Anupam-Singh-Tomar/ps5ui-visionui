@@ -3,3 +3,4 @@ out/
 *.apk
 *.idsig
 !/ps5UI.apk
+!/tested/*.apk
